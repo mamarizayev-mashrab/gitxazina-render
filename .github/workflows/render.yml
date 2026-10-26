@@ -1,0 +1,112 @@
+# Bepul video render: agent (Render free) loyiha arxivini tayyorlab, shu workflow'ni ishga tushiradi.
+# Arxiv imzolangan havoladan olinadi, Chrome bilan render qilinadi, MP4 agentga qaytariladi.
+name: render
+# Run nomi job id bilan: agent GitHub API orqali aynan shu run holatini topadi (boshlanmagan bo'lsa — darhol biladi)
+run-name: "render #${{ inputs.job_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Job ID"
+        required: true
+      bundle_url:
+        description: "Loyiha arxivi (imzolangan)"
+        required: true
+      result_url:
+        description: "Natija qabul qiluvchi (imzolangan)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-${{ github.event.inputs.job_id }}
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    # Osilgan render 2000 bepul daqiqani yemasin; qadam timeout'i xato hisoblanadi → agentga xabar
+    timeout-minutes: 15
+    env:
+      # Kirishlar faqat env orqali — shell'ga to'g'ridan-to'g'ri qo'yilmaydi (injection'dan himoya)
+      BUNDLE_URL: ${{ github.event.inputs.bundle_url }}
+      RESULT_URL: ${{ github.event.inputs.result_url }}
+      # Repo o'zgaruvchisi (Settings → Variables): agent manzili, masalan https://gitxazina-agent.onrender.com
+      EXPECTED_BASE: ${{ vars.PUBLIC_URL }}
+      MAX_BYTES: "19000000"
+    steps:
+      - name: Havolalarni tekshirish
+        run: |
+          # Arxiv va natija faqat agentning o'zidan/o'ziga: PUBLIC_URL repo o'zgaruvchisi majburiy
+          if [ -z "$EXPECTED_BASE" ]; then echo "Repo variable PUBLIC_URL berilmagan (Settings -> Variables)"; exit 1; fi
+          base="${EXPECTED_BASE%/}/render/"
+          case "$BUNDLE_URL" in "$base"*) ;; *) echo "bundle_url agent manzilida emas"; exit 1 ;; esac
+          case "$RESULT_URL" in "$base"*) ;; *) echo "result_url agent manzilida emas"; exit 1 ;; esac
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Render qilinadigan sahifa begona README matnidan quriladi — runner'da git tokeni qolmasin
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Paketlar (faqat runtime)
+        run: npm ci --omit=dev --ignore-scripts
+
+      - name: ffmpeg
+        run: ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      - name: Loyiha arxivi
+        run: |
+          curl -fsSL --retry 3 "$BUNDLE_URL" -o bundle.tgz
+          mkdir project
+          tar -xzf bundle.tgz -C project
+
+      - name: Chrome
+        timeout-minutes: 4
+        run: npx hyperframes browser ensure
+
+      - name: Render
+        timeout-minutes: 8
+        run: npx hyperframes render project --output out.mp4 --quality standard --strict
+
+      - name: Hajmni tekshirish (Telegram saqlash ≤ 19 MB)
+        run: |
+          size=$(stat -c %s out.mp4)
+          if [ "$size" -gt "$MAX_BYTES" ]; then
+            mv out.mp4 orig.mp4
+            # Sifat zinapoyasi: har safar asl videodan qayta siqiladi va hajm qayta tekshiriladi
+            for crf in 26 30 34; do
+              ffmpeg -loglevel error -y -i orig.mp4 -c:v libx264 -crf "$crf" -preset medium -c:a aac -b:a 96k out.mp4
+              size=$(stat -c %s out.mp4)
+              echo "crf=$crf → $size bayt"
+              [ "$size" -le "$MAX_BYTES" ] && break
+            done
+            if [ "$size" -gt "$MAX_BYTES" ]; then
+              # Oxirgi chora: davomiylikdan hisoblangan bitreyt (≈18 MB, audio 96k)
+              dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 orig.mp4)
+              kbps=$(awk -v d="$dur" 'BEGIN { k = int(18 * 8 * 1024 * 1024 / d / 1000) - 96; if (k < 200) k = 200; print k }')
+              ffmpeg -loglevel error -y -i orig.mp4 -c:v libx264 -b:v "${kbps}k" -maxrate "${kbps}k" -bufsize "$((kbps * 2))k" -preset medium -c:a aac -b:a 96k out.mp4
+              size=$(stat -c %s out.mp4)
+              echo "bitreyt=${kbps}k → $size bayt"
+            fi
+            if [ "$size" -gt "$MAX_BYTES" ]; then
+              echo "Video siqilgandan keyin ham $size bayt (> $MAX_BYTES) — Telegram saqlashga sig'maydi"
+              exit 1
+            fi
+          fi
+          ls -la out.mp4
+
+      - name: Natijani agentga yuborish
+        run: |
+          curl -fsS --retry 3 -X POST -H "content-type: video/mp4" --data-binary @out.mp4 "$RESULT_URL"
+
+      - name: Xato haqida xabar
+        if: failure() || cancelled()
+        run: |
+          curl -fsS -X POST -H "content-type: text/plain" --data "workflow xatosi" "$RESULT_URL&failed=1" || true

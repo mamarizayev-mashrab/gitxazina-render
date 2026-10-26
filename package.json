@@ -1,0 +1,10 @@
+{
+  "name": "gitxazina-render",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GitXazina agenti uchun video render workflow'i (GitHub Actions). Kod yo'q: faqat hyperframes.",
+  "type": "module",
+  "dependencies": {
+    "hyperframes": "0.8.181"
+  }
+}
