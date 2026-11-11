@@ -59,7 +59,20 @@ jobs:
         run: npm ci --omit=dev --ignore-scripts
 
       - name: ffmpeg
-        run: ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+        # apt ko'zgusi osilib qolsa butun job 15 daqiqa kutib bekor bo'lardi: har buyruqqa vaqt chegarasi va qayta urinish
+        timeout-minutes: 8
+        run: |
+          if ffmpeg -version >/dev/null 2>&1; then exit 0; fi
+          apt() { sudo timeout "$1" apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ForceIPv4=true -o DPkg::Lock::Timeout=60 "${@:2}"; }
+          # Avval runner'dagi tayyor paket ro'yxati bilan; bo'lmasa ro'yxatni yangilab
+          apt 120 install -y --no-install-recommends ffmpeg && exit 0
+          for i in 1 2; do
+            if apt 60 update && apt 120 install -y --no-install-recommends ffmpeg; then exit 0; fi
+            echo "apt urinish $i muvaffaqiyatsiz"
+            sleep 5
+          done
+          echo "ffmpeg o'rnatilmadi (apt ko'zgusi javob bermayapti)"
+          exit 1
 
       - name: Loyiha arxivi
         run: |
