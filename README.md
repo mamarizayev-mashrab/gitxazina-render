@@ -4,8 +4,10 @@ GitXazina agentining video render'i shu repo'ning GitHub Actions workflow'ida ba
 Repo **ommaviy (public)** — ommaviy repolarda GitHub-hosted runner daqiqalari bepul va cheksiz,
 shaxsiy repolardagi oylik 2000 daqiqa limiti bunga ta'sir qilmaydi.
 
-Hech qanday sir yo'q: agent loyiha arxivini imzolangan, 2 soatlik havola bilan beradi,
-workflow MP4'ni imzolangan havolaga qaytaradi. Havolalar faqat `PUBLIC_URL` o'zgaruvchisidagi manzilga tegishli bo'lishi shart.
+Bitta sir bor — `RENDER_SECRET` (Settings → Secrets and variables → Actions → Secrets; qiymati agentdagi
+`npm run cli render-secret`). Workflow kirishlari (havolalar) public logda ochiq ko'rinadi, shuning uchun ular
+o'zi hech narsaga ruxsat bermaydi: arxivni olish va MP4'ni qaytarish faqat shu sir bilan (`Authorization` sarlavhasi).
+Havolalar faqat `PUBLIC_URL` o'zgaruvchisidagi (https) manzilga tegishli bo'lishi shart.
 
 ## Sozlash (bir marta)
 

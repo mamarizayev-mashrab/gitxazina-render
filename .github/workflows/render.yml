@@ -11,10 +11,10 @@ on:
         description: "Job ID"
         required: true
       bundle_url:
-        description: "Loyiha arxivi (imzolangan)"
+        description: "Loyiha arxivi havolasi (sirsiz; kirish RENDER_SECRET bilan)"
         required: true
       result_url:
-        description: "Natija qabul qiluvchi (imzolangan)"
+        description: "Natija qabul qiluvchi havola (sirsiz)"
         required: true
 
 permissions:
@@ -35,12 +35,19 @@ jobs:
       RESULT_URL: ${{ github.event.inputs.result_url }}
       # Repo o'zgaruvchisi (Settings → Variables): agent manzili, masalan https://gitxazina-agent.onrender.com
       EXPECTED_BASE: ${{ vars.PUBLIC_URL }}
+      # RENDER_SECRET (repo siri: agentdagi `npm run cli render-secret`) job darajasida EMAS — faqat agent bilan
+      # gaplashadigan qadamlarda: begona README'dan qurilgan sahifani ochadigan Chrome/render uni ko'rmaydi
       MAX_BYTES: "19000000"
     steps:
       - name: Havolalarni tekshirish
+        env:
+          RENDER_SECRET: ${{ secrets.RENDER_SECRET }}
         run: |
           # Arxiv va natija faqat agentning o'zidan/o'ziga: PUBLIC_URL repo o'zgaruvchisi majburiy
           if [ -z "$EXPECTED_BASE" ]; then echo "Repo variable PUBLIC_URL berilmagan (Settings -> Variables)"; exit 1; fi
+          if [ -z "$RENDER_SECRET" ]; then echo "Repo secret RENDER_SECRET berilmagan (Settings -> Secrets -> Actions)"; exit 1; fi
+          # Sir faqat https orqali va faqat agent manziliga yuboriladi
+          case "$EXPECTED_BASE" in https://*) ;; *) echo "PUBLIC_URL https:// bilan boshlanishi kerak"; exit 1 ;; esac
           base="${EXPECTED_BASE%/}/render/"
           case "$BUNDLE_URL" in "$base"*) ;; *) echo "bundle_url agent manzilida emas"; exit 1 ;; esac
           case "$RESULT_URL" in "$base"*) ;; *) echo "result_url agent manzilida emas"; exit 1 ;; esac
@@ -75,8 +82,10 @@ jobs:
           exit 1
 
       - name: Loyiha arxivi
+        env:
+          RENDER_SECRET: ${{ secrets.RENDER_SECRET }}
         run: |
-          curl -fsSL --retry 3 "$BUNDLE_URL" -o bundle.tgz
+          curl -fsS --retry 3 -H "authorization: Bearer $RENDER_SECRET" "$BUNDLE_URL" -o bundle.tgz
           mkdir project
           tar -xzf bundle.tgz -C project
 
@@ -116,10 +125,14 @@ jobs:
           ls -la out.mp4
 
       - name: Natijani agentga yuborish
+        env:
+          RENDER_SECRET: ${{ secrets.RENDER_SECRET }}
         run: |
-          curl -fsS --retry 3 -X POST -H "content-type: video/mp4" --data-binary @out.mp4 "$RESULT_URL"
+          curl -fsS --retry 3 -X POST -H "authorization: Bearer $RENDER_SECRET" -H "content-type: video/mp4" --data-binary @out.mp4 "$RESULT_URL"
 
       - name: Xato haqida xabar
         if: failure() || cancelled()
+        env:
+          RENDER_SECRET: ${{ secrets.RENDER_SECRET }}
         run: |
-          curl -fsS -X POST -H "content-type: text/plain" --data "workflow xatosi" "$RESULT_URL&failed=1" || true
+          curl -fsS -X POST -H "authorization: Bearer $RENDER_SECRET" -H "content-type: text/plain" --data "workflow xatosi" "$RESULT_URL&failed=1" || true
